@@ -64,8 +64,16 @@ function Invoke-Rollback {
     Write-ColorOutput "Installation failed. Rolling back..." "Error"
 
     try {
-        Stop-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
-        sc.exe delete "AugmentProxy" | Out-Null
+        $nssmPath = "$InstallPath\nssm.exe"
+        if (Test-Path $nssmPath) {
+            # Use NSSM to stop and remove service
+            & $nssmPath stop AugmentProxy confirm 2>&1 | Out-Null
+            & $nssmPath remove AugmentProxy confirm 2>&1 | Out-Null
+        } else {
+            # Fallback to traditional methods
+            Stop-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
+            sc.exe delete "AugmentProxy" 2>&1 | Out-Null
+        }
     } catch {}
 
     Remove-Item $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -148,16 +156,37 @@ function Start-ProxyService {
     Write-ColorOutput "Starting proxy client..." "Info"
 
     $binaryPath = "$InstallPath\proxy_client.exe"
+    $nssmPath = "$InstallPath\nssm.exe"
 
     try {
         if (-not (Test-Path $binaryPath)) {
             throw "Proxy client executable not found at: $binaryPath"
         }
 
-        Write-ColorOutput "Creating Windows service..." "Info"
+        Write-ColorOutput "Downloading NSSM (service wrapper)..." "Info"
 
-        $serviceArgs = "$ProxyUsername $ProxyPassword"
-        $serviceBinPath = "`"$binaryPath`" $serviceArgs"
+        # Download NSSM
+        $nssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
+        $nssmZip = "$env:TEMP\nssm.zip"
+        $nssmExtract = "$env:TEMP\nssm"
+
+        try {
+            Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip -UseBasicParsing
+            Expand-Archive -Path $nssmZip -DestinationPath $nssmExtract -Force
+
+            # Copy the appropriate architecture version
+            if ([Environment]::Is64BitOperatingSystem) {
+                Copy-Item "$nssmExtract\nssm-2.24\win64\nssm.exe" -Destination $nssmPath -Force
+            } else {
+                Copy-Item "$nssmExtract\nssm-2.24\win32\nssm.exe" -Destination $nssmPath -Force
+            }
+
+            Write-ColorOutput "NSSM downloaded successfully" "Success"
+        } catch {
+            throw "Failed to download NSSM: $_"
+        }
+
+        Write-ColorOutput "Creating Windows service..." "Info"
 
         # First, check if service already exists and remove it
         $existingService = Get-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
@@ -165,43 +194,55 @@ function Start-ProxyService {
             Write-ColorOutput "Removing existing service..." "Info"
             Stop-Service -Name "AugmentProxy" -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 1
-            & sc.exe delete AugmentProxy | Out-Null
+            & $nssmPath stop AugmentProxy confirm | Out-Null
+            & $nssmPath remove AugmentProxy confirm | Out-Null
             Start-Sleep -Seconds 2
         }
 
-        # Create the service using New-Service cmdlet (more reliable than sc.exe)
-        Write-ColorOutput "Creating service with binary: $binaryPath" "Info"
-        Write-ColorOutput "Service arguments: $serviceArgs" "Info"
+        # Install service using NSSM
+        Write-ColorOutput "Installing service with NSSM..." "Info"
+        & $nssmPath install AugmentProxy $binaryPath $ProxyUsername $ProxyPassword | Out-Null
 
-        try {
-            New-Service -Name "AugmentProxy" `
-                -BinaryPathName $serviceBinPath `
-                -DisplayName "Augment Proxy Service" `
-                -StartupType Automatic `
-                -ErrorAction Stop | Out-Null
-            Write-ColorOutput "Service created successfully using New-Service" "Success"
-        } catch {
-            Write-ColorOutput "New-Service failed, trying sc.exe..." "Warn"
-            # Fallback to sc.exe with proper syntax
-            $scOutput = & cmd.exe /c "sc create AugmentProxy binPath= `"$serviceBinPath`" start= auto DisplayName= `"Augment Proxy Service`"" 2>&1
-            Write-ColorOutput "sc.exe output: $scOutput" "Info"
-            Start-Sleep -Seconds 2
+        if ($LASTEXITCODE -ne 0) {
+            throw "NSSM install failed with exit code: $LASTEXITCODE"
         }
 
-        # Verify service was created
+        # Configure service
+        & $nssmPath set AugmentProxy DisplayName "Augment Proxy Service" | Out-Null
+        & $nssmPath set AugmentProxy Description "Local proxy client for Augment AI" | Out-Null
+        & $nssmPath set AugmentProxy Start SERVICE_AUTO_START | Out-Null
+        & $nssmPath set AugmentProxy AppStdout "$InstallPath\logs\stdout.log" | Out-Null
+        & $nssmPath set AugmentProxy AppStderr "$InstallPath\logs\stderr.log" | Out-Null
+        & $nssmPath set AugmentProxy AppRotateFiles 1 | Out-Null
+        & $nssmPath set AugmentProxy AppRotateBytes 1048576 | Out-Null
+
+        Write-ColorOutput "Service configured successfully" "Success"
+
+        # Start the service
+        Write-ColorOutput "Starting service..." "Info"
+        & $nssmPath start AugmentProxy | Out-Null
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "NSSM start failed with exit code: $LASTEXITCODE"
+        }
+
+        Start-Sleep -Seconds 3
+
+        # Verify service is running
         $service = Get-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
         if (-not $service) {
             throw "Service was not created"
         }
 
-        Write-ColorOutput "Service created successfully, starting..." "Info"
-        Start-Service -Name "AugmentProxy" -ErrorAction Stop
-
-        Start-Sleep -Seconds 3
-
-        $service = Get-Service -Name "AugmentProxy"
         if ($service.Status -ne "Running") {
-            throw "Service status: $($service.Status)"
+            # Try to get log information
+            $logPath = "$InstallPath\logs\stderr.log"
+            if (Test-Path $logPath) {
+                $logContent = Get-Content $logPath -Tail 20 -ErrorAction SilentlyContinue
+                Write-ColorOutput "Error log:" "Warn"
+                $logContent | ForEach-Object { Write-Host "  $_" }
+            }
+            throw "Service status: $($service.Status). Expected: Running"
         }
 
         Write-ColorOutput "Proxy client service started successfully" "Success"
