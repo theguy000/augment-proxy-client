@@ -236,11 +236,12 @@ function Start-CNTLMService {
         # Create new service using sc.exe for better control
         Write-ColorOutput "Creating Windows service..." "Info"
 
-        # Use sc.exe to create service with proper working directory
+        # Use sc.exe to create service - note: sc.exe requires space after = sign
         $scBinPath = "`"$binaryPath`" -c `"$configPath`""
-        sc.exe create $serviceName binPath= $scBinPath start= demand DisplayName= "CNTLM Authentication Proxy" | Out-Null
+        $scResult = sc.exe create $serviceName binPath= "$scBinPath" start= demand DisplayName= "CNTLMAuthProxy" 2>&1
 
         if ($LASTEXITCODE -ne 0) {
+            Write-ColorOutput "sc.exe output: $scResult" "Error"
             throw "Failed to create service. sc.exe exit code: $LASTEXITCODE"
         }
 
