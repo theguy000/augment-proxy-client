@@ -6,16 +6,17 @@
 param(
     [Parameter(Mandatory=$true, Position=0)]
     [string]$ProxyUsername,
-    
+
     [Parameter(Mandatory=$true, Position=1)]
     [string]$ProxyPassword,
-    
+
     [string]$ProxyHost = "proxy.ai-proxy.space",
     [string]$ProxyPort = "6969",
     [string]$GitHubRepo = "theguy000/augment-proxy-client",
     [string]$Version = "0.92.3"
 )
 
+$InstallerVersion = "1.0.5"  # Installer script version
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
 
@@ -358,6 +359,7 @@ function Main {
     Write-Host ""
     Write-Host "=========================================" -ForegroundColor Cyan
     Write-Host "Augment Proxy - One-Line Installer" -ForegroundColor Cyan
+    Write-Host "Version: $InstallerVersion" -ForegroundColor Cyan
     Write-Host "=========================================" -ForegroundColor Cyan
     Write-Host ""
     
