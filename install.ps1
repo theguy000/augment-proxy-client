@@ -18,7 +18,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
-$GitHubReleases = "https://github.com/$GitHubRepo/releases/download"
 
 # Colors for output
 function Write-ColorOutput {
@@ -89,40 +88,29 @@ function Get-SystemArchitecture {
 
 # Download and install CNTLM
 function Install-CNTLM {
-    $arch = Get-SystemArchitecture
-    Write-ColorOutput "Downloading CNTLM for Windows $arch..." "Info"
-    
-    $binaryUrl = "$GitHubReleases/v$Version/cntlm-$Version-$arch.exe"
+    Write-ColorOutput "Downloading CNTLM for Windows..." "Info"
+
     $installPath = "C:\Program Files\CNTLM"
-    $binaryPath = "$installPath\cntlm.exe"
-    
+
     try {
         # Create installation directory
         New-Item -ItemType Directory -Force -Path $installPath | Out-Null
-        
-        # Download CNTLM binary
-        Invoke-WebRequest -Uri $binaryUrl -OutFile $binaryPath -UseBasicParsing
-        
+
+        # Download CNTLM binaries from GitHub
+        $files = @("cntlm.exe", "cygwin1.dll", "cyggcc_s-1.dll", "cygstdc++-6.dll", "cygrunsrv.exe")
+
+        foreach ($file in $files) {
+            $fileUrl = "$GitHubRaw/binaries/windows/$file"
+            $filePath = "$installPath\$file"
+
+            Write-ColorOutput "Downloading $file..." "Info"
+            Invoke-WebRequest -Uri $fileUrl -OutFile $filePath -UseBasicParsing
+        }
+
         Write-ColorOutput "CNTLM downloaded successfully" "Success"
     } catch {
         Write-ColorOutput "Failed to download CNTLM: $_" "Error"
-        Write-ColorOutput "Trying alternative download from SourceForge..." "Info"
-        
-        # Fallback: Download from SourceForge
-        try {
-            $sfUrl = "https://sourceforge.net/projects/cntlm/files/cntlm/0.92.3/cntlm-0.92.3-installer.exe/download"
-            $installerPath = "$env:TEMP\cntlm-installer.exe"
-            
-            Invoke-WebRequest -Uri $sfUrl -OutFile $installerPath -UseBasicParsing
-            
-            # Run installer silently
-            Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait
-            
-            Write-ColorOutput "CNTLM installed via SourceForge installer" "Success"
-        } catch {
-            Write-ColorOutput "Failed to install CNTLM: $_" "Error"
-            Invoke-Rollback
-        }
+        Invoke-Rollback
     }
 }
 
