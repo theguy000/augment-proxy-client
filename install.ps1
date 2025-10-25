@@ -17,7 +17,7 @@ param(
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
 
-$InstallerVersion = "1.0.14"  # Installer script version
+$InstallerVersion = "1.0.15"  # Installer script version
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
 $InstallPath = "C:\Program Files\AugmentProxy"
