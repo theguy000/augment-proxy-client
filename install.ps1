@@ -17,7 +17,7 @@ param(
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
 
-$InstallerVersion = "1.0.11"  # Installer script version
+$InstallerVersion = "1.0.12"  # Installer script version
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
 
@@ -168,6 +168,7 @@ function New-CNTLMConfig {
         Write-ColorOutput "Could not download template, creating config directly..." "Warn"
         
         # Fallback: create config directly
+        # Note: Removed Auth Basic, ConnectTimeout, SocketTimeout, LogLevel as they cause errors
         $config = @"
 # CNTLM Configuration for Augment Proxy
 Listen 3128
@@ -175,14 +176,10 @@ Proxy ${ProxyHost}:${ProxyPort}
 Username $ProxyUsername
 Password $ProxyPassword
 Domain
-Auth Basic
 Allow 127.0.0.1
 Allow localhost
 Deny 0/0
 NoProxy localhost, 127.0.0.1, .local
-ConnectTimeout 3600
-SocketTimeout 3600
-LogLevel 2
 "@
         Set-Content -Path $configPath -Value $config -Force
     }
