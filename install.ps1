@@ -17,7 +17,7 @@ param(
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
 
-$InstallerVersion = "1.0.15"  # Installer script version
+$InstallerVersion = "1.0.16"  # Installer script version
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
 $InstallPath = "C:\Program Files\AugmentProxy"
@@ -78,8 +78,8 @@ function Invoke-Rollback {
 
     # Stop and remove 3proxy service
     try {
-        Stop-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
-        sc.exe delete "AugmentProxy" | Out-Null
+        Stop-Service -Name "3proxy" -ErrorAction SilentlyContinue
+        sc.exe delete "3proxy" | Out-Null
     } catch {}
 
     # Remove installation
@@ -204,22 +204,12 @@ parent 1000 http ${ProxyHost} ${ProxyPort} ${ProxyUsername} ${ProxyPassword}
 
 # Create and start 3proxy service
 function Start-3ProxyService {
-    Write-ColorOutput "Creating 3proxy Windows service..." "Info"
+    Write-ColorOutput "Installing 3proxy Windows service..." "Info"
 
-    $serviceName = "AugmentProxy"
     $binaryPath = "$InstallPath\3proxy.exe"
     $configPath = "$InstallPath\3proxy.cfg"
 
     try {
-        # Check if service already exists
-        $existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-        if ($existingService) {
-            Write-ColorOutput "Service already exists, removing..." "Info"
-            Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
-            sc.exe delete $serviceName | Out-Null
-            Start-Sleep -Seconds 2
-        }
-
         # Verify 3proxy executable exists
         if (-not (Test-Path $binaryPath)) {
             throw "3proxy executable not found at: $binaryPath"
@@ -230,33 +220,44 @@ function Start-3ProxyService {
             throw "3proxy config file not found at: $configPath"
         }
 
-        # Create new service using New-Service cmdlet
-        Write-ColorOutput "Creating Windows service..." "Info"
+        # Use 3proxy's built-in service installer
+        Write-ColorOutput "Installing service using 3proxy --install..." "Info"
+
+        # Change to install directory so 3proxy can find config
+        Push-Location $InstallPath
 
         try {
-            New-Service -Name $serviceName `
-                        -BinaryPathName "`"$binaryPath`" `"$configPath`"" `
-                        -DisplayName "Augment Proxy" `
-                        -Description "Local proxy for Augment API authentication (3proxy)" `
-                        -StartupType Manual `
-                        -ErrorAction Stop | Out-Null
+            # Run 3proxy --install to install as Windows service
+            $installOutput = & $binaryPath --install 2>&1 | Out-String
 
-            Write-ColorOutput "Service created successfully" "Success"
-        } catch {
-            throw "Failed to create service: $_"
+            Write-ColorOutput "Service installation output: $installOutput" "Info"
+
+            # Wait for service to be registered
+            Start-Sleep -Seconds 2
+
+            # Check if service exists
+            $service = Get-Service -Name "3proxy" -ErrorAction SilentlyContinue
+            if (-not $service) {
+                throw "Service was not created by 3proxy --install"
+            }
+
+            Write-ColorOutput "3proxy service installed successfully" "Success"
+
+        } finally {
+            Pop-Location
         }
 
-        Write-ColorOutput "Service created, attempting to start..." "Info"
+        Write-ColorOutput "Starting 3proxy service..." "Info"
 
         # Start service with error handling
         try {
-            Start-Service -Name $serviceName -ErrorAction Stop
+            Start-Service -Name "3proxy" -ErrorAction Stop
 
             # Wait for service to start
             Start-Sleep -Seconds 3
 
             # Verify service is running
-            $service = Get-Service -Name $serviceName
+            $service = Get-Service -Name "3proxy"
             if ($service.Status -ne "Running") {
                 throw "Service status: $($service.Status)"
             }
@@ -267,7 +268,7 @@ function Start-3ProxyService {
             Write-ColorOutput "Attempting to run 3proxy as background process instead..." "Info"
 
             # Remove the failed service
-            sc.exe delete $serviceName | Out-Null
+            sc.exe delete "3proxy" | Out-Null
 
             # Start 3proxy as a background process using Start-Process
             Write-ColorOutput "Starting 3proxy as background process..." "Info"
@@ -404,8 +405,8 @@ function Main {
         Write-Host "  Username: $ProxyUsername" -ForegroundColor White
         Write-Host ""
         Write-Host "Troubleshooting:" -ForegroundColor Cyan
-        Write-Host "  Check service status: Get-Service AugmentProxy" -ForegroundColor White
-        Write-Host "  Restart service: Restart-Service AugmentProxy" -ForegroundColor White
+        Write-Host "  Check service status: Get-Service 3proxy" -ForegroundColor White
+        Write-Host "  Restart service: Restart-Service 3proxy" -ForegroundColor White
         Write-Host "  Config file: $InstallPath\3proxy.cfg" -ForegroundColor White
         Write-Host ""
     } catch {
