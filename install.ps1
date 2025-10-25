@@ -208,41 +208,71 @@ function Start-CNTLMService {
             throw "CNTLM config file not found at: $configPath"
         }
 
+        # Test CNTLM executable first
+        Write-ColorOutput "Testing CNTLM executable..." "Info"
+        $testResult = & $binaryPath -h 2>&1
+        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
+            throw "CNTLM executable test failed. Exit code: $LASTEXITCODE. Output: $testResult"
+        }
+
         # Create new service
         Write-ColorOutput "Creating Windows service..." "Info"
-        New-Service -Name $serviceName `
-                    -BinaryPathName "`"$binaryPath`" -c `"$configPath`"" `
-                    -DisplayName "CNTLM Authentication Proxy" `
-                    -Description "Local proxy for Augment API authentication" `
-                    -StartupType Automatic | Out-Null
+        $serviceParams = @{
+            Name = $serviceName
+            BinaryPathName = "`"$binaryPath`" -c `"$configPath`""
+            DisplayName = "CNTLM Authentication Proxy"
+            Description = "Local proxy for Augment API authentication"
+            StartupType = "Manual"
+        }
+        New-Service @serviceParams | Out-Null
 
         Write-ColorOutput "Service created, attempting to start..." "Info"
 
         # Start service with error handling
         try {
             Start-Service -Name $serviceName -ErrorAction Stop
+
+            # Wait for service to start
+            Start-Sleep -Seconds 3
+
+            # Verify service is running
+            $service = Get-Service -Name $serviceName
+            if ($service.Status -ne "Running") {
+                throw "Service status: $($service.Status)"
+            }
+
+            Write-ColorOutput "CNTLM service started successfully" "Success"
         } catch {
-            # Get more details from event log
-            $eventLog = Get-EventLog -LogName Application -Source "Service Control Manager" -Newest 5 -ErrorAction SilentlyContinue | Where-Object { $_.Message -like "*CNTLM*" } | Select-Object -First 1
-            if ($eventLog) {
-                throw "Service start failed: $($eventLog.Message)"
+            Write-ColorOutput "Service start failed: $_" "Warn"
+            Write-ColorOutput "Attempting to run CNTLM as background process instead..." "Info"
+
+            # Remove the failed service
+            sc.exe delete $serviceName | Out-Null
+
+            # Start CNTLM as a background process
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = $binaryPath
+            $startInfo.Arguments = "-c `"$configPath`""
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.WindowStyle = "Hidden"
+
+            $process = [System.Diagnostics.Process]::Start($startInfo)
+
+            if ($process) {
+                Start-Sleep -Seconds 2
+                if (-not $process.HasExited) {
+                    Write-ColorOutput "CNTLM started as background process (PID: $($process.Id))" "Success"
+                    Write-ColorOutput "Note: CNTLM will stop when you log out. Consider running as a service." "Warn"
+                } else {
+                    throw "CNTLM process exited immediately. Exit code: $($process.ExitCode)"
+                }
             } else {
-                throw "Service start failed: $_"
+                throw "Failed to start CNTLM process"
             }
         }
-
-        # Wait for service to start
-        Start-Sleep -Seconds 3
-
-        # Verify service is running
-        $service = Get-Service -Name $serviceName
-        if ($service.Status -ne "Running") {
-            throw "Service failed to start. Status: $($service.Status)"
-        }
-
-        Write-ColorOutput "CNTLM service started successfully" "Success"
     } catch {
-        Write-ColorOutput "Failed to create/start CNTLM service: $_" "Error"
+        Write-ColorOutput "Failed to start CNTLM: $_" "Error"
         Invoke-Rollback
     }
 }
