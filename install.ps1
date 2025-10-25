@@ -17,7 +17,7 @@ param(
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
 
-$InstallerVersion = "1.0.16"  # Installer script version
+$InstallerVersion = "1.0.17"  # Installer script version
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
 $InstallPath = "C:\Program Files\AugmentProxy"
@@ -60,7 +60,7 @@ function Add-DefenderExclusion {
 # Cleanup function
 function Invoke-Cleanup {
     Write-ColorOutput "Cleaning up temporary files..." "Info"
-    Remove-Item "$env:TEMP\3proxy*" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:TEMP\3proxy*" -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false
     Remove-Item "$env:TEMP\mitmproxy-ca-cert.pem" -Force -ErrorAction SilentlyContinue
 }
 
@@ -113,9 +113,22 @@ function Install-3Proxy {
     Write-ColorOutput "Downloading 3proxy for Windows..." "Info"
 
     try {
+        # Stop any existing 3proxy processes/services first
+        Write-ColorOutput "Checking for existing 3proxy installation..." "Info"
+        Stop-Service -Name "3proxy" -Force -ErrorAction SilentlyContinue
+        Get-Process -Name "3proxy" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+
         # Add Windows Defender exclusions BEFORE downloading
         Add-DefenderExclusion -Path $InstallPath
         Add-DefenderExclusion -Path $env:TEMP
+
+        # Remove old installation if exists
+        if (Test-Path $InstallPath) {
+            Write-ColorOutput "Removing old installation..." "Info"
+            Remove-Item $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+        }
 
         # Create installation directory
         New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
