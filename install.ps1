@@ -1,6 +1,6 @@
 #
 # Augment Proxy - One-Line Installer for Windows
-# Usage: iwr -useb https://raw.githubusercontent.com/USER/augment-proxy-client/main/install.ps1 | iex -Args "username","password"
+# Usage: iwr -useb https://raw.githubusercontent.com/USER/augment-proxy-client/main/install.ps1 -OutFile install.ps1; .\install.ps1 -ProxyUsername "username" -ProxyPassword "password"
 #
 
 param(
