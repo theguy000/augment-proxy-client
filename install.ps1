@@ -1,4 +1,4 @@
-#
+﻿#
 # Augment Proxy - One-Line Installer for Windows (using Python proxy client)
 # Usage: iwr -useb https://raw.githubusercontent.com/USER/augment-proxy-client/main/install-goproxy.ps1 | iex -Args "username","password"
 #
@@ -195,15 +195,42 @@ function Start-ProxyService {
 
         # Start service
         Start-Sleep -Seconds 2
-        Start-Service -Name "AugmentProxy" -ErrorAction Stop
+        
+        # Try to start the service with proper error handling
+        try {
+            Start-Service -Name "AugmentProxy" -ErrorAction Stop
+            Write-ColorOutput "Service start command executed" "Info"
+        } catch {
+            Write-ColorOutput "Failed to start service: $($_.Exception.Message)" "Warn"
+            throw "Could not start AugmentProxy service. Error: $_"
+        }
 
         # Wait for service to start
         Start-Sleep -Seconds 3
 
-        # Verify service is running
-        $service = Get-Service -Name "AugmentProxy"
+        # Verify service is running with proper error handling
+        $service = Get-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
+        if (-not $service) {
+            Write-ColorOutput "Service 'AugmentProxy' was not found after creation" "Warn"
+            throw "Service was created but cannot be found. This may be a Windows service registration issue."
+        }
+        
         if ($service.Status -ne "Running") {
-            throw "Service status: $($service.Status)"
+            Write-ColorOutput "Service status: $($service.Status)" "Warn"
+            
+            # Try to get more details from event log
+            try {
+                $logPath = "C:\Program Files\AugmentProxy\logs\proxy_client.log"
+                if (Test-Path $logPath) {
+                    $logContent = Get-Content $logPath -Tail 20 -ErrorAction SilentlyContinue
+                    Write-ColorOutput "Last 20 lines from log file:" "Info"
+                    $logContent | ForEach-Object { Write-Host "  $_" }
+                }
+            } catch {
+                Write-ColorOutput "Could not read log file" "Warn"
+            }
+            
+            throw "Service status: $($service.Status). Expected: Running"
         }
 
         Write-ColorOutput "Proxy client service started successfully" "Success"
@@ -314,4 +341,5 @@ try {
     Write-ColorOutput "Installation failed: $_" "Error"
     Invoke-Rollback
 }
+
 
