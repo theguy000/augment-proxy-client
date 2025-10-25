@@ -19,18 +19,22 @@ $tempScript = "$env:TEMP\augment-install-$(Get-Date -Format 'yyyyMMddHHmmss').ps
 try {
     Write-Host "Downloading installation script..." -ForegroundColor Cyan
     $content = (Invoke-WebRequest -Uri $scriptUrl -UseBasicParsing).Content
-    
+
+    # Remove any non-ASCII characters (fixes corrupted UTF-8 issues)
+    $content = $content -replace '[^\x00-\x7F]', ''
+
     # Normalize line endings to CRLF for Windows
     $content = $content -replace "`r`n", "`n" -replace "`n", "`r`n"
-    
-    # Save with proper encoding
-    [System.IO.File]::WriteAllText($tempScript, $content, [System.Text.Encoding]::UTF8)
-    
+
+    # Save with proper encoding (UTF-8 without BOM)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($tempScript, $content, $utf8NoBom)
+
     Write-Host "Executing installation..." -ForegroundColor Cyan
-    
+
     # Execute the script
     & $tempScript -ProxyUsername $ProxyUsername -ProxyPassword $ProxyPassword
-    
+
 } finally {
     # Cleanup
     if (Test-Path $tempScript) {
