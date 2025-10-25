@@ -188,12 +188,11 @@ log
 # Local proxy on port 3128
 proxy -p3128
 
-# Parent proxy with Basic authentication
-parent 1000 http ${ProxyHost} ${ProxyPort} ${ProxyUsername} ${ProxyPassword}
-
 # Access control - allow all from localhost
 allow 127.0.0.1
-deny *
+
+# Parent proxy with Basic authentication (must come after allow)
+parent 1000 http ${ProxyHost} ${ProxyPort} ${ProxyUsername} ${ProxyPassword}
 "@
         Set-Content -Path $configPath -Value $config -Force
         Write-ColorOutput "3proxy configuration created" "Success"
