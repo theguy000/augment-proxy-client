@@ -210,9 +210,16 @@ function Start-CNTLMService {
 
         # Test CNTLM executable first
         Write-ColorOutput "Testing CNTLM executable..." "Info"
-        $testResult = & $binaryPath -h 2>&1
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
-            throw "CNTLM executable test failed. Exit code: $LASTEXITCODE. Output: $testResult"
+        $testResult = & $binaryPath -h 2>&1 | Out-String
+
+        # Ignore Cygwin FAST_CWD warning - it's harmless on newer Windows versions
+        if ($testResult -match "find_fast_cwd: WARNING") {
+            Write-ColorOutput "Cygwin compatibility warning detected (harmless)" "Warn"
+        }
+
+        # Check if help output was generated (indicates executable works)
+        if ($testResult -notmatch "Usage:" -and $testResult -notmatch "cntlm") {
+            throw "CNTLM executable test failed. Output: $testResult"
         }
 
         # Add CNTLM directory to system PATH so DLLs can be found
