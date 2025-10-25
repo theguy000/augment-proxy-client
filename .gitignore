@@ -1,0 +1,12 @@
+﻿# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+
+# Build artifacts
+*.o
+*.so
+*.dylib
