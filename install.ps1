@@ -273,23 +273,36 @@ function Start-CNTLMService {
             # Remove the failed service
             sc.exe delete $serviceName | Out-Null
 
+            # Try to run CNTLM manually to see the error
+            Write-ColorOutput "Testing CNTLM with config file..." "Info"
+            $testOutput = & $binaryPath -c $configPath -v 2>&1 | Out-String
+            Write-ColorOutput "CNTLM output: $testOutput" "Info"
+
             # Start CNTLM as a background process
             $startInfo = New-Object System.Diagnostics.ProcessStartInfo
             $startInfo.FileName = $binaryPath
-            $startInfo.Arguments = "-c `"$configPath`""
+            $startInfo.Arguments = "-c `"$configPath`" -f"  # -f for foreground mode initially
             $startInfo.UseShellExecute = $false
-            $startInfo.CreateNoWindow = $true
-            $startInfo.WindowStyle = "Hidden"
+            $startInfo.CreateNoWindow = $false  # Show window for debugging
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
 
             $process = [System.Diagnostics.Process]::Start($startInfo)
 
             if ($process) {
-                Start-Sleep -Seconds 2
+                Start-Sleep -Seconds 3
+
+                # Read output
+                $stdout = $process.StandardOutput.ReadToEnd()
+                $stderr = $process.StandardError.ReadToEnd()
+
                 if (-not $process.HasExited) {
-                    Write-ColorOutput "CNTLM started as background process (PID: $($process.Id))" "Success"
-                    Write-ColorOutput "Note: CNTLM will stop when you log out. Consider running as a service." "Warn"
+                    Write-ColorOutput "CNTLM started as foreground process (PID: $($process.Id))" "Success"
+                    Write-ColorOutput "STDOUT: $stdout" "Info"
+                    Write-ColorOutput "STDERR: $stderr" "Info"
+                    Write-ColorOutput "Note: CNTLM is running in foreground mode for debugging." "Warn"
                 } else {
-                    throw "CNTLM process exited immediately. Exit code: $($process.ExitCode)"
+                    throw "CNTLM process exited immediately. Exit code: $($process.ExitCode)`nSTDOUT: $stdout`nSTDERR: $stderr"
                 }
             } else {
                 throw "Failed to start CNTLM process"
