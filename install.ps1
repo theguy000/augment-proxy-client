@@ -313,7 +313,7 @@ function Main {
         
         Write-Host ""
         Write-Host "=========================================" -ForegroundColor Green
-        Write-Host "âœ“ Installation Complete!" -ForegroundColor Green
+        Write-Host " Installation Complete!" -ForegroundColor Green
         Write-Host "=========================================" -ForegroundColor Green
         Write-Host ""
         Write-Host "Next steps:" -ForegroundColor Cyan
