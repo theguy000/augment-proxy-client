@@ -233,20 +233,22 @@ function Start-CNTLMService {
             [Environment]::SetEnvironmentVariable("Path", "$currentPath;$installDir", "Machine")
         }
 
-        # Create new service using sc.exe for better control
+        # Create new service using New-Service cmdlet
         Write-ColorOutput "Creating Windows service..." "Info"
 
-        # Use sc.exe to create service - note: sc.exe requires space after = sign
-        $scBinPath = "`"$binaryPath`" -c `"$configPath`""
-        $scResult = sc.exe create $serviceName binPath= "$scBinPath" start= demand DisplayName= "CNTLMAuthProxy" 2>&1
+        # Create service with New-Service (simpler and more reliable than sc.exe)
+        try {
+            New-Service -Name $serviceName `
+                        -BinaryPathName "`"$binaryPath`" -c `"$configPath`"" `
+                        -DisplayName "CNTLM Auth Proxy" `
+                        -Description "Local proxy for Augment API authentication" `
+                        -StartupType Manual `
+                        -ErrorAction Stop | Out-Null
 
-        if ($LASTEXITCODE -ne 0) {
-            Write-ColorOutput "sc.exe output: $scResult" "Error"
-            throw "Failed to create service. sc.exe exit code: $LASTEXITCODE"
+            Write-ColorOutput "Service created successfully" "Success"
+        } catch {
+            throw "Failed to create service: $_"
         }
-
-        # Set service description
-        sc.exe description $serviceName "Local proxy for Augment API authentication" | Out-Null
 
         Write-ColorOutput "Service created, attempting to start..." "Info"
 
