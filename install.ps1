@@ -215,16 +215,27 @@ function Start-CNTLMService {
             throw "CNTLM executable test failed. Exit code: $LASTEXITCODE. Output: $testResult"
         }
 
-        # Create new service
-        Write-ColorOutput "Creating Windows service..." "Info"
-        $serviceParams = @{
-            Name = $serviceName
-            BinaryPathName = "`"$binaryPath`" -c `"$configPath`""
-            DisplayName = "CNTLM Authentication Proxy"
-            Description = "Local proxy for Augment API authentication"
-            StartupType = "Manual"
+        # Add CNTLM directory to system PATH so DLLs can be found
+        $installDir = Split-Path $binaryPath -Parent
+        $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+        if ($currentPath -notlike "*$installDir*") {
+            Write-ColorOutput "Adding CNTLM to system PATH..." "Info"
+            [Environment]::SetEnvironmentVariable("Path", "$currentPath;$installDir", "Machine")
         }
-        New-Service @serviceParams | Out-Null
+
+        # Create new service using sc.exe for better control
+        Write-ColorOutput "Creating Windows service..." "Info"
+
+        # Use sc.exe to create service with proper working directory
+        $scBinPath = "`"$binaryPath`" -c `"$configPath`""
+        sc.exe create $serviceName binPath= $scBinPath start= demand DisplayName= "CNTLM Authentication Proxy" | Out-Null
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create service. sc.exe exit code: $LASTEXITCODE"
+        }
+
+        # Set service description
+        sc.exe description $serviceName "Local proxy for Augment API authentication" | Out-Null
 
         Write-ColorOutput "Service created, attempting to start..." "Info"
 
