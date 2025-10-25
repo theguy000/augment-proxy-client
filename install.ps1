@@ -273,36 +273,39 @@ function Start-CNTLMService {
             # Remove the failed service
             sc.exe delete $serviceName | Out-Null
 
-            # Try to run CNTLM manually to see the error
-            Write-ColorOutput "Testing CNTLM with config file..." "Info"
-            $testOutput = & $binaryPath -c $configPath -v 2>&1 | Out-String
-            Write-ColorOutput "CNTLM output: $testOutput" "Info"
+            # Start CNTLM as a background process using Start-Process
+            Write-ColorOutput "Starting CNTLM as background process..." "Info"
 
-            # Start CNTLM as a background process
-            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $startInfo.FileName = $binaryPath
-            $startInfo.Arguments = "-c `"$configPath`" -f"  # -f for foreground mode initially
-            $startInfo.UseShellExecute = $false
-            $startInfo.CreateNoWindow = $false  # Show window for debugging
-            $startInfo.RedirectStandardOutput = $true
-            $startInfo.RedirectStandardError = $true
-
-            $process = [System.Diagnostics.Process]::Start($startInfo)
+            # Use Start-Process with -PassThru to get the process object
+            $process = Start-Process -FilePath $binaryPath `
+                                     -ArgumentList "-c `"$configPath`"" `
+                                     -WindowStyle Hidden `
+                                     -PassThru `
+                                     -ErrorAction Stop
 
             if ($process) {
                 Start-Sleep -Seconds 3
 
-                # Read output
-                $stdout = $process.StandardOutput.ReadToEnd()
-                $stderr = $process.StandardError.ReadToEnd()
-
+                # Check if process is still running
+                $process.Refresh()
                 if (-not $process.HasExited) {
-                    Write-ColorOutput "CNTLM started as foreground process (PID: $($process.Id))" "Success"
-                    Write-ColorOutput "STDOUT: $stdout" "Info"
-                    Write-ColorOutput "STDERR: $stderr" "Info"
-                    Write-ColorOutput "Note: CNTLM is running in foreground mode for debugging." "Warn"
+                    Write-ColorOutput "CNTLM started as background process (PID: $($process.Id))" "Success"
+                    Write-ColorOutput "Note: CNTLM will stop when you log out. To make it persistent, fix the service issue." "Warn"
+
+                    # Test if CNTLM is listening on port 3128
+                    Start-Sleep -Seconds 2
+                    try {
+                        $testConnection = Test-NetConnection -ComputerName localhost -Port 3128 -WarningAction SilentlyContinue
+                        if ($testConnection.TcpTestSucceeded) {
+                            Write-ColorOutput "CNTLM is listening on port 3128" "Success"
+                        } else {
+                            Write-ColorOutput "Warning: CNTLM process is running but not listening on port 3128" "Warn"
+                        }
+                    } catch {
+                        Write-ColorOutput "Could not test port 3128: $_" "Warn"
+                    }
                 } else {
-                    throw "CNTLM process exited immediately. Exit code: $($process.ExitCode)`nSTDOUT: $stdout`nSTDERR: $stderr"
+                    throw "CNTLM process exited immediately. Exit code: $($process.ExitCode)"
                 }
             } else {
                 throw "Failed to start CNTLM process"
