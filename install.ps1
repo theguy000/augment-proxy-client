@@ -198,25 +198,48 @@ function Start-CNTLMService {
             Start-Sleep -Seconds 2
         }
         
+        # Verify CNTLM executable exists
+        if (-not (Test-Path $binaryPath)) {
+            throw "CNTLM executable not found at: $binaryPath"
+        }
+
+        # Verify config file exists
+        if (-not (Test-Path $configPath)) {
+            throw "CNTLM config file not found at: $configPath"
+        }
+
         # Create new service
+        Write-ColorOutput "Creating Windows service..." "Info"
         New-Service -Name $serviceName `
                     -BinaryPathName "`"$binaryPath`" -c `"$configPath`"" `
                     -DisplayName "CNTLM Authentication Proxy" `
                     -Description "Local proxy for Augment API authentication" `
                     -StartupType Automatic | Out-Null
-        
-        # Start service
-        Start-Service -Name $serviceName
-        
+
+        Write-ColorOutput "Service created, attempting to start..." "Info"
+
+        # Start service with error handling
+        try {
+            Start-Service -Name $serviceName -ErrorAction Stop
+        } catch {
+            # Get more details from event log
+            $eventLog = Get-EventLog -LogName Application -Source "Service Control Manager" -Newest 5 -ErrorAction SilentlyContinue | Where-Object { $_.Message -like "*CNTLM*" } | Select-Object -First 1
+            if ($eventLog) {
+                throw "Service start failed: $($eventLog.Message)"
+            } else {
+                throw "Service start failed: $_"
+            }
+        }
+
         # Wait for service to start
         Start-Sleep -Seconds 3
-        
+
         # Verify service is running
         $service = Get-Service -Name $serviceName
         if ($service.Status -ne "Running") {
             throw "Service failed to start. Status: $($service.Status)"
         }
-        
+
         Write-ColorOutput "CNTLM service started successfully" "Success"
     } catch {
         Write-ColorOutput "Failed to create/start CNTLM service: $_" "Error"
