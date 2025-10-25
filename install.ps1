@@ -16,7 +16,7 @@ param(
     [string]$Version = "0.92.3"
 )
 
-$InstallerVersion = "1.0.5"  # Installer script version
+$InstallerVersion = "1.0.6"  # Installer script version
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
 
