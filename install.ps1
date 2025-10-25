@@ -17,9 +17,10 @@ param(
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
 
-$InstallerVersion = "1.0.12"  # Installer script version
+$InstallerVersion = "1.0.13"  # Installer script version
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
+$InstallPath = "C:\Program Files\AugmentProxy"
 
 # Colors for output
 function Write-ColorOutput {
@@ -36,10 +37,30 @@ function Write-ColorOutput {
     }
 }
 
+# Add Windows Defender exclusion
+function Add-DefenderExclusion {
+    param([string]$Path)
+
+    Write-ColorOutput "Adding Windows Defender exclusion for $Path..." "Info"
+    try {
+        # Check if running as administrator
+        $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+        if ($isAdmin) {
+            Add-MpPreference -ExclusionPath $Path -ErrorAction SilentlyContinue
+            Write-ColorOutput "Windows Defender exclusion added successfully" "Success"
+        } else {
+            Write-ColorOutput "Not running as administrator - skipping Defender exclusion (may cause issues)" "Warn"
+        }
+    } catch {
+        Write-ColorOutput "Could not add Defender exclusion: $($_.Exception.Message)" "Warn"
+    }
+}
+
 # Cleanup function
 function Invoke-Cleanup {
     Write-ColorOutput "Cleaning up temporary files..." "Info"
-    Remove-Item "$env:TEMP\cntlm*" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$env:TEMP\3proxy*" -Force -ErrorAction SilentlyContinue
     Remove-Item "$env:TEMP\mitmproxy-ca-cert.pem" -Force -ErrorAction SilentlyContinue
 }
 
@@ -47,22 +68,22 @@ function Invoke-Cleanup {
 function Invoke-Rollback {
     if ($NoRollback) {
         Write-ColorOutput "Installation failed. NoRollback flag set - keeping files for debugging..." "Warn"
-        Write-ColorOutput "CNTLM files are in: C:\Program Files\CNTLM" "Info"
-        Write-ColorOutput "Config file: C:\Program Files\CNTLM\cntlm.conf" "Info"
+        Write-ColorOutput "3proxy files are in: $InstallPath" "Info"
+        Write-ColorOutput "Config file: $InstallPath\3proxy.cfg" "Info"
         Invoke-Cleanup
         exit 1
     }
 
     Write-ColorOutput "Installation failed. Rolling back..." "Error"
 
-    # Stop and remove CNTLM service
+    # Stop and remove 3proxy service
     try {
-        Stop-Service -Name "CNTLM" -ErrorAction SilentlyContinue
-        sc.exe delete "CNTLM" | Out-Null
+        Stop-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
+        sc.exe delete "AugmentProxy" | Out-Null
     } catch {}
 
-    # Remove CNTLM installation
-    Remove-Item "C:\Program Files\CNTLM" -Recurse -Force -ErrorAction SilentlyContinue
+    # Remove installation
+    Remove-Item $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
 
     # Restore VS Code settings backup
     $settingsPath = "$env:APPDATA\Code\User\settings.json"
@@ -87,39 +108,43 @@ if (-not (Test-Administrator)) {
     exit 1
 }
 
-# Detect architecture
-function Get-SystemArchitecture {
-    if ([Environment]::Is64BitOperatingSystem) {
-        return "x64"
-    } else {
-        return "x86"
-    }
-}
-
-# Download and install CNTLM
-function Install-CNTLM {
-    Write-ColorOutput "Downloading CNTLM for Windows..." "Info"
-
-    $installPath = "C:\Program Files\CNTLM"
+# Download and install 3proxy
+function Install-3Proxy {
+    Write-ColorOutput "Downloading 3proxy for Windows..." "Info"
 
     try {
+        # Add Windows Defender exclusion BEFORE downloading
+        Add-DefenderExclusion -Path $InstallPath
+
         # Create installation directory
-        New-Item -ItemType Directory -Force -Path $installPath | Out-Null
+        New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
 
-        # Download CNTLM binaries from GitHub
-        $files = @("cntlm.exe", "cygwin1.dll", "cyggcc_s-1.dll", "cygstdc++-6.dll", "cygrunsrv.exe")
+        # Download 3proxy lite version (smaller, no x64 requirement)
+        $proxyUrl = "https://github.com/3proxy/3proxy/releases/download/0.9.4/3proxy-0.9.4.zip"
+        $zipPath = "$env:TEMP\3proxy.zip"
+        $extractPath = "$env:TEMP\3proxy"
 
-        foreach ($file in $files) {
-            $fileUrl = "$GitHubRaw/binaries/windows/$file"
-            $filePath = "$installPath\$file"
+        Write-ColorOutput "Downloading 3proxy lite version..." "Info"
+        Invoke-WebRequest -Uri $proxyUrl -OutFile $zipPath -UseBasicParsing
 
-            Write-ColorOutput "Downloading $file..." "Info"
-            Invoke-WebRequest -Uri $fileUrl -OutFile $filePath -UseBasicParsing
+        Write-ColorOutput "Extracting 3proxy..." "Info"
+        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+
+        # Find and copy 3proxy.exe (it's in bin/Win32 for lite version)
+        $exePath = Get-ChildItem -Path $extractPath -Filter "3proxy.exe" -Recurse | Select-Object -First 1
+        if ($exePath) {
+            Copy-Item $exePath.FullName -Destination "$InstallPath\3proxy.exe" -Force
+            Write-ColorOutput "3proxy installed successfully" "Success"
+        } else {
+            throw "Could not find 3proxy.exe in downloaded archive"
         }
 
-        Write-ColorOutput "CNTLM downloaded successfully" "Success"
+        # Cleanup temp files
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+
     } catch {
-        Write-ColorOutput "Failed to download CNTLM: $_" "Error"
+        Write-ColorOutput "Failed to download 3proxy: $_" "Error"
         Invoke-Rollback
     }
 }
@@ -146,108 +171,73 @@ function Install-Certificate {
     }
 }
 
-# Generate CNTLM configuration
-function New-CNTLMConfig {
-    Write-ColorOutput "Generating CNTLM configuration..." "Info"
-    
-    $templateUrl = "$GitHubRaw/templates/cntlm.conf.template"
-    $configPath = "C:\Program Files\CNTLM\cntlm.conf"
-    
+# Generate 3proxy configuration
+function New-3ProxyConfig {
+    Write-ColorOutput "Generating 3proxy configuration..." "Info"
+
+    $configPath = "$InstallPath\3proxy.cfg"
+
     try {
-        # Try to download template
-        $template = (Invoke-WebRequest -Uri $templateUrl -UseBasicParsing).Content
-        
-        # Replace placeholders
-        $config = $template -replace '{{PROXY_USERNAME}}', $ProxyUsername
-        $config = $config -replace '{{PROXY_PASSWORD}}', $ProxyPassword
-        $config = $config -replace '{{PROXY_HOST}}', $ProxyHost
-        $config = $config -replace '{{PROXY_PORT}}', $ProxyPort
-        
-        Set-Content -Path $configPath -Value $config -Force
-    } catch {
-        Write-ColorOutput "Could not download template, creating config directly..." "Warn"
-        
-        # Fallback: create config directly
-        # Note: Removed Auth Basic, ConnectTimeout, SocketTimeout, LogLevel as they cause errors
+        # Create 3proxy config with Basic authentication support
         $config = @"
-# CNTLM Configuration for Augment Proxy
-Listen 3128
-Proxy ${ProxyHost}:${ProxyPort}
-Username $ProxyUsername
-Password $ProxyPassword
-Domain
-Allow 127.0.0.1
-Allow localhost
-Deny 0/0
-NoProxy localhost, 127.0.0.1, .local
+# 3proxy configuration for Augment Proxy
+# Logging
+log
+
+# Authentication
+auth strong
+users ${ProxyUsername}:CL:${ProxyPassword}
+
+# Local proxy on port 3128
+proxy -p3128 -a
+
+# Parent proxy with Basic authentication
+parent 1000 http ${ProxyHost} ${ProxyPort} ${ProxyUsername} ${ProxyPassword}
 "@
         Set-Content -Path $configPath -Value $config -Force
+        Write-ColorOutput "3proxy configuration created" "Success"
+    } catch {
+        Write-ColorOutput "Failed to create config: $_" "Error"
+        Invoke-Rollback
     }
-    
-    Write-ColorOutput "CNTLM configuration created" "Success"
 }
 
-# Create and start CNTLM service
-function Start-CNTLMService {
-    Write-ColorOutput "Creating CNTLM Windows service..." "Info"
-    
-    $serviceName = "CNTLM"
-    $binaryPath = "C:\Program Files\CNTLM\cntlm.exe"
-    $configPath = "C:\Program Files\CNTLM\cntlm.conf"
-    
+# Create and start 3proxy service
+function Start-3ProxyService {
+    Write-ColorOutput "Creating 3proxy Windows service..." "Info"
+
+    $serviceName = "AugmentProxy"
+    $binaryPath = "$InstallPath\3proxy.exe"
+    $configPath = "$InstallPath\3proxy.cfg"
+
     try {
         # Check if service already exists
         $existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
         if ($existingService) {
-            Write-ColorOutput "CNTLM service already exists, removing..." "Info"
+            Write-ColorOutput "Service already exists, removing..." "Info"
             Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
             sc.exe delete $serviceName | Out-Null
             Start-Sleep -Seconds 2
         }
-        
-        # Verify CNTLM executable exists
+
+        # Verify 3proxy executable exists
         if (-not (Test-Path $binaryPath)) {
-            throw "CNTLM executable not found at: $binaryPath"
+            throw "3proxy executable not found at: $binaryPath"
         }
 
         # Verify config file exists
         if (-not (Test-Path $configPath)) {
-            throw "CNTLM config file not found at: $configPath"
-        }
-
-        # Test CNTLM executable first
-        Write-ColorOutput "Testing CNTLM executable..." "Info"
-        try {
-            $testResult = & $binaryPath -h 2>&1 | Out-String
-
-            # Ignore Cygwin FAST_CWD warning - it's harmless on newer Windows versions
-            if ($testResult -match "find_fast_cwd: WARNING") {
-                Write-ColorOutput "Cygwin compatibility warning detected (harmless)" "Warn"
-            }
-
-            Write-ColorOutput "CNTLM executable test passed" "Success"
-        } catch {
-            # If test fails, just warn but continue - the service start will be the real test
-            Write-ColorOutput "CNTLM test warning: $_" "Warn"
-        }
-
-        # Add CNTLM directory to system PATH so DLLs can be found
-        $installDir = Split-Path $binaryPath -Parent
-        $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-        if ($currentPath -notlike "*$installDir*") {
-            Write-ColorOutput "Adding CNTLM to system PATH..." "Info"
-            [Environment]::SetEnvironmentVariable("Path", "$currentPath;$installDir", "Machine")
+            throw "3proxy config file not found at: $configPath"
         }
 
         # Create new service using New-Service cmdlet
         Write-ColorOutput "Creating Windows service..." "Info"
 
-        # Create service with New-Service (simpler and more reliable than sc.exe)
         try {
             New-Service -Name $serviceName `
-                        -BinaryPathName "`"$binaryPath`" -c `"$configPath`"" `
-                        -DisplayName "CNTLM Auth Proxy" `
-                        -Description "Local proxy for Augment API authentication" `
+                        -BinaryPathName "`"$binaryPath`" `"$configPath`"" `
+                        -DisplayName "Augment Proxy" `
+                        -Description "Local proxy for Augment API authentication (3proxy)" `
                         -StartupType Manual `
                         -ErrorAction Stop | Out-Null
 
@@ -271,20 +261,20 @@ function Start-CNTLMService {
                 throw "Service status: $($service.Status)"
             }
 
-            Write-ColorOutput "CNTLM service started successfully" "Success"
+            Write-ColorOutput "3proxy service started successfully" "Success"
         } catch {
             Write-ColorOutput "Service start failed: $_" "Warn"
-            Write-ColorOutput "Attempting to run CNTLM as background process instead..." "Info"
+            Write-ColorOutput "Attempting to run 3proxy as background process instead..." "Info"
 
             # Remove the failed service
             sc.exe delete $serviceName | Out-Null
 
-            # Start CNTLM as a background process using Start-Process
-            Write-ColorOutput "Starting CNTLM as background process..." "Info"
+            # Start 3proxy as a background process using Start-Process
+            Write-ColorOutput "Starting 3proxy as background process..." "Info"
 
             # Use Start-Process with -PassThru to get the process object
             $process = Start-Process -FilePath $binaryPath `
-                                     -ArgumentList "-c `"$configPath`"" `
+                                     -ArgumentList "`"$configPath`"" `
                                      -WindowStyle Hidden `
                                      -PassThru `
                                      -ErrorAction Stop
@@ -295,30 +285,30 @@ function Start-CNTLMService {
                 # Check if process is still running
                 $process.Refresh()
                 if (-not $process.HasExited) {
-                    Write-ColorOutput "CNTLM started as background process (PID: $($process.Id))" "Success"
-                    Write-ColorOutput "Note: CNTLM will stop when you log out. To make it persistent, fix the service issue." "Warn"
+                    Write-ColorOutput "3proxy started as background process (PID: $($process.Id))" "Success"
+                    Write-ColorOutput "Note: 3proxy will stop when you log out. To make it persistent, fix the service issue." "Warn"
 
-                    # Test if CNTLM is listening on port 3128
+                    # Test if 3proxy is listening on port 3128
                     Start-Sleep -Seconds 2
                     try {
                         $testConnection = Test-NetConnection -ComputerName localhost -Port 3128 -WarningAction SilentlyContinue
                         if ($testConnection.TcpTestSucceeded) {
-                            Write-ColorOutput "CNTLM is listening on port 3128" "Success"
+                            Write-ColorOutput "3proxy is listening on port 3128" "Success"
                         } else {
-                            Write-ColorOutput "Warning: CNTLM process is running but not listening on port 3128" "Warn"
+                            Write-ColorOutput "Warning: 3proxy process is running but not listening on port 3128" "Warn"
                         }
                     } catch {
                         Write-ColorOutput "Could not test port 3128: $_" "Warn"
                     }
                 } else {
-                    throw "CNTLM process exited immediately. Exit code: $($process.ExitCode)"
+                    throw "3proxy process exited immediately. Exit code: $($process.ExitCode)"
                 }
             } else {
-                throw "Failed to start CNTLM process"
+                throw "Failed to start 3proxy process"
             }
         }
     } catch {
-        Write-ColorOutput "Failed to start CNTLM: $_" "Error"
+        Write-ColorOutput "Failed to start 3proxy: $_" "Error"
         Invoke-Rollback
     }
 }
@@ -391,14 +381,14 @@ function Main {
     Write-Host ""
     
     try {
-        Install-CNTLM
+        Install-3Proxy
         Install-Certificate
-        New-CNTLMConfig
-        Start-CNTLMService
+        New-3ProxyConfig
+        Start-3ProxyService
         Set-VSCodeProxy
         Test-ProxyConnectivity
         Invoke-Cleanup
-        
+
         Write-Host ""
         Write-Host "=========================================" -ForegroundColor Green
         Write-Host " Installation Complete!" -ForegroundColor Green
@@ -409,14 +399,14 @@ function Main {
         Write-Host "2. The Augment extension will now work through the proxy" -ForegroundColor White
         Write-Host ""
         Write-Host "Configuration:" -ForegroundColor Cyan
-        Write-Host "  CNTLM running on: localhost:3128" -ForegroundColor White
+        Write-Host "  3proxy running on: localhost:3128" -ForegroundColor White
         Write-Host "  Proxy server: ${ProxyHost}:${ProxyPort}" -ForegroundColor White
         Write-Host "  Username: $ProxyUsername" -ForegroundColor White
         Write-Host ""
         Write-Host "Troubleshooting:" -ForegroundColor Cyan
-        Write-Host "  Check CNTLM status: Get-Service CNTLM" -ForegroundColor White
-        Write-Host "  View event logs: Get-EventLog -LogName Application -Source CNTLM -Newest 10" -ForegroundColor White
-        Write-Host "  Restart CNTLM: Restart-Service CNTLM" -ForegroundColor White
+        Write-Host "  Check service status: Get-Service AugmentProxy" -ForegroundColor White
+        Write-Host "  Restart service: Restart-Service AugmentProxy" -ForegroundColor White
+        Write-Host "  Config file: $InstallPath\3proxy.cfg" -ForegroundColor White
         Write-Host ""
     } catch {
         Write-ColorOutput "Installation failed: $_" "Error"
