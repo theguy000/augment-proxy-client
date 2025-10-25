@@ -13,7 +13,8 @@ param(
     [string]$ProxyHost = "proxy.ai-proxy.space",
     [string]$ProxyPort = "6969",
     [string]$GitHubRepo = "theguy000/augment-proxy-client",
-    [string]$Version = "0.92.3"
+    [string]$Version = "0.92.3",
+    [switch]$NoRollback  # Debug flag to prevent rollback
 )
 
 $InstallerVersion = "1.0.10"  # Installer script version
@@ -44,23 +45,31 @@ function Invoke-Cleanup {
 
 # Rollback function
 function Invoke-Rollback {
+    if ($NoRollback) {
+        Write-ColorOutput "Installation failed. NoRollback flag set - keeping files for debugging..." "Warn"
+        Write-ColorOutput "CNTLM files are in: C:\Program Files\CNTLM" "Info"
+        Write-ColorOutput "Config file: C:\Program Files\CNTLM\cntlm.conf" "Info"
+        Invoke-Cleanup
+        exit 1
+    }
+
     Write-ColorOutput "Installation failed. Rolling back..." "Error"
-    
+
     # Stop and remove CNTLM service
     try {
         Stop-Service -Name "CNTLM" -ErrorAction SilentlyContinue
         sc.exe delete "CNTLM" | Out-Null
     } catch {}
-    
+
     # Remove CNTLM installation
     Remove-Item "C:\Program Files\CNTLM" -Recurse -Force -ErrorAction SilentlyContinue
-    
+
     # Restore VS Code settings backup
     $settingsPath = "$env:APPDATA\Code\User\settings.json"
     if (Test-Path "${settingsPath}.backup") {
         Move-Item "${settingsPath}.backup" $settingsPath -Force
     }
-    
+
     Invoke-Cleanup
     exit 1
 }
