@@ -1,6 +1,6 @@
 #
-# Augment Proxy - One-Line Installer for Windows
-# Usage: iwr -useb https://raw.githubusercontent.com/USER/augment-proxy-client/main/install.ps1 -OutFile install.ps1; .\install.ps1 -ProxyUsername "username" -ProxyPassword "password"
+# Augment Proxy - One-Line Installer for Windows (using Python proxy client)
+# Usage: iwr -useb https://raw.githubusercontent.com/USER/augment-proxy-client/main/install-goproxy.ps1 | iex -Args "username","password"
 #
 
 param(
@@ -13,11 +13,10 @@ param(
     [string]$ProxyHost = "proxy.ai-proxy.space",
     [string]$ProxyPort = "6969",
     [string]$GitHubRepo = "theguy000/augment-proxy-client",
-    [string]$Version = "0.92.3",
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
 
-$InstallerVersion = "1.0.17"  # Installer script version
+$InstallerVersion = "3.0.0"  # Installer script version (Python proxy client)
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
 $InstallPath = "C:\Program Files\AugmentProxy"
@@ -28,7 +27,7 @@ function Write-ColorOutput {
         [string]$Message,
         [string]$Type = "Info"
     )
-    
+
     switch ($Type) {
         "Info"    { Write-Host "[INFO] $Message" -ForegroundColor Blue }
         "Success" { Write-Host "[SUCCESS] $Message" -ForegroundColor Green }
@@ -43,14 +42,13 @@ function Add-DefenderExclusion {
 
     Write-ColorOutput "Adding Windows Defender exclusion for $Path..." "Info"
     try {
-        # Check if running as administrator
         $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
         if ($isAdmin) {
             Add-MpPreference -ExclusionPath $Path -ErrorAction SilentlyContinue
             Write-ColorOutput "Windows Defender exclusion added successfully" "Success"
         } else {
-            Write-ColorOutput "Not running as administrator - skipping Defender exclusion (may cause issues)" "Warn"
+            Write-ColorOutput "Not running as administrator - skipping Defender exclusion" "Warn"
         }
     } catch {
         Write-ColorOutput "Could not add Defender exclusion: $($_.Exception.Message)" "Warn"
@@ -60,7 +58,7 @@ function Add-DefenderExclusion {
 # Cleanup function
 function Invoke-Cleanup {
     Write-ColorOutput "Cleaning up temporary files..." "Info"
-    Remove-Item "$env:TEMP\3proxy*" -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false
+    Remove-Item "$env:TEMP\proxy_client.exe" -Force -ErrorAction SilentlyContinue -Confirm:$false
     Remove-Item "$env:TEMP\mitmproxy-ca-cert.pem" -Force -ErrorAction SilentlyContinue
 }
 
@@ -68,18 +66,17 @@ function Invoke-Cleanup {
 function Invoke-Rollback {
     if ($NoRollback) {
         Write-ColorOutput "Installation failed. NoRollback flag set - keeping files for debugging..." "Warn"
-        Write-ColorOutput "3proxy files are in: $InstallPath" "Info"
-        Write-ColorOutput "Config file: $InstallPath\3proxy.cfg" "Info"
+        Write-ColorOutput "goproxy files are in: $InstallPath" "Info"
         Invoke-Cleanup
         exit 1
     }
 
     Write-ColorOutput "Installation failed. Rolling back..." "Error"
 
-    # Stop and remove 3proxy service
+    # Stop and remove proxy service
     try {
-        Stop-Service -Name "3proxy" -ErrorAction SilentlyContinue
-        sc.exe delete "3proxy" | Out-Null
+        Stop-Service -Name "AugmentProxy" -ErrorAction SilentlyContinue
+        sc.exe delete "AugmentProxy" | Out-Null
     } catch {}
 
     # Remove installation
@@ -108,15 +105,15 @@ if (-not (Test-Administrator)) {
     exit 1
 }
 
-# Download and install 3proxy
-function Install-3Proxy {
-    Write-ColorOutput "Downloading 3proxy for Windows..." "Info"
+# Download and install proxy client
+function Install-ProxyClient {
+    Write-ColorOutput "Downloading proxy client for Windows..." "Info"
 
     try {
-        # Stop any existing 3proxy processes/services first
-        Write-ColorOutput "Checking for existing 3proxy installation..." "Info"
-        Stop-Service -Name "3proxy" -Force -ErrorAction SilentlyContinue
-        Get-Process -Name "3proxy" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # Stop any existing processes/services first
+        Write-ColorOutput "Checking for existing installation..." "Info"
+        Stop-Service -Name "AugmentProxy" -Force -ErrorAction SilentlyContinue
+        Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
 
         # Add Windows Defender exclusions BEFORE downloading
@@ -133,32 +130,23 @@ function Install-3Proxy {
         # Create installation directory
         New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
 
-        # Download 3proxy lite version (smaller, no x64 requirement)
-        $proxyUrl = "https://github.com/3proxy/3proxy/releases/download/0.9.4/3proxy-0.9.4.zip"
-        $zipPath = "$env:TEMP\3proxy.zip"
-        $extractPath = "$env:TEMP\3proxy"
+        # Download proxy client binary from GitHub repo
+        $proxyUrl = "$GitHubRaw/binaries/windows/proxy_client.exe"
+        $tempExePath = "$env:TEMP\proxy_client.exe"
 
-        Write-ColorOutput "Downloading 3proxy lite version..." "Info"
-        Invoke-WebRequest -Uri $proxyUrl -OutFile $zipPath -UseBasicParsing
+        Write-ColorOutput "Downloading proxy client binary from GitHub..." "Info"
+        Invoke-WebRequest -Uri $proxyUrl -OutFile $tempExePath -UseBasicParsing
 
-        Write-ColorOutput "Extracting 3proxy..." "Info"
-        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-
-        # Find and copy 3proxy.exe (it's in bin/Win32 for lite version)
-        $exePath = Get-ChildItem -Path $extractPath -Filter "3proxy.exe" -Recurse | Select-Object -First 1
-        if ($exePath) {
-            Copy-Item $exePath.FullName -Destination "$InstallPath\3proxy.exe" -Force
-            Write-ColorOutput "3proxy installed successfully" "Success"
+        # Verify download
+        if (Test-Path $tempExePath) {
+            Copy-Item $tempExePath -Destination "$InstallPath\proxy_client.exe" -Force
+            Write-ColorOutput "Proxy client installed successfully" "Success"
         } else {
-            throw "Could not find 3proxy.exe in downloaded archive"
+            throw "Could not download proxy_client.exe from GitHub"
         }
 
-        # Cleanup temp files
-        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
-
     } catch {
-        Write-ColorOutput "Failed to download 3proxy: $_" "Error"
+        Write-ColorOutput "Failed to download proxy client: $_" "Error"
         Invoke-Rollback
     }
 }
@@ -166,18 +154,16 @@ function Install-3Proxy {
 # Install mitmproxy certificate
 function Install-Certificate {
     Write-ColorOutput "Downloading mitmproxy certificate..." "Info"
-    
-    $certUrl = "$GitHubRaw/certs/mitmproxy-ca-cert.pem"
-    $certPath = "$env:TEMP\mitmproxy-ca-cert.pem"
-    
+
     try {
+        $certUrl = "$GitHubRaw/certs/mitmproxy-ca-cert.pem"
+        $certPath = "$env:TEMP\mitmproxy-ca-cert.pem"
+
         Invoke-WebRequest -Uri $certUrl -OutFile $certPath -UseBasicParsing
-        
+
         Write-ColorOutput "Installing certificate to Trusted Root Certification Authorities..." "Info"
-        
-        # Import certificate to user's trusted root store
-        certutil -addstore -user "Root" $certPath | Out-Null
-        
+        Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+
         Write-ColorOutput "Certificate installed successfully" "Success"
     } catch {
         Write-ColorOutput "Failed to install certificate: $_" "Error"
@@ -185,249 +171,147 @@ function Install-Certificate {
     }
 }
 
-# Generate 3proxy configuration
-function New-3ProxyConfig {
-    Write-ColorOutput "Generating 3proxy configuration..." "Info"
+# Start proxy client service
+function Start-ProxyService {
+    Write-ColorOutput "Starting proxy client..." "Info"
 
-    $configPath = "$InstallPath\3proxy.cfg"
-
-    try {
-        # Create 3proxy config with Basic authentication support
-        $config = @"
-# 3proxy configuration for Augment Proxy
-# Logging
-log
-
-# Local proxy on port 3128
-proxy -p3128
-
-# Access control - allow all from localhost
-allow 127.0.0.1
-
-# Parent proxy with Basic authentication (must come after allow)
-parent 1000 http ${ProxyHost} ${ProxyPort} ${ProxyUsername} ${ProxyPassword}
-"@
-        Set-Content -Path $configPath -Value $config -Force
-        Write-ColorOutput "3proxy configuration created" "Success"
-    } catch {
-        Write-ColorOutput "Failed to create config: $_" "Error"
-        Invoke-Rollback
-    }
-}
-
-# Create and start 3proxy service
-function Start-3ProxyService {
-    Write-ColorOutput "Installing 3proxy Windows service..." "Info"
-
-    $binaryPath = "$InstallPath\3proxy.exe"
-    $configPath = "$InstallPath\3proxy.cfg"
+    $binaryPath = "$InstallPath\proxy_client.exe"
 
     try {
-        # Verify 3proxy executable exists
+        # Verify executable exists
         if (-not (Test-Path $binaryPath)) {
-            throw "3proxy executable not found at: $binaryPath"
+            throw "Proxy client executable not found at: $binaryPath"
         }
 
-        # Verify config file exists
-        if (-not (Test-Path $configPath)) {
-            throw "3proxy config file not found at: $configPath"
+        Write-ColorOutput "Creating Windows service..." "Info"
+
+        # Create service using sc.exe
+        # The proxy_client.exe takes username and password as arguments
+        $serviceArgs = "$ProxyUsername $ProxyPassword"
+
+        $serviceBinPath = "`"$binaryPath`" $serviceArgs"
+
+        sc.exe create AugmentProxy binPath= $serviceBinPath start= auto DisplayName= "Augment Proxy Service" | Out-Null
+
+        # Start service
+        Start-Sleep -Seconds 2
+        Start-Service -Name "AugmentProxy" -ErrorAction Stop
+
+        # Wait for service to start
+        Start-Sleep -Seconds 3
+
+        # Verify service is running
+        $service = Get-Service -Name "AugmentProxy"
+        if ($service.Status -ne "Running") {
+            throw "Service status: $($service.Status)"
         }
 
-        # Use 3proxy's built-in service installer
-        Write-ColorOutput "Installing service using 3proxy --install..." "Info"
+        Write-ColorOutput "Proxy client service started successfully" "Success"
 
-        # Change to install directory so 3proxy can find config
-        Push-Location $InstallPath
-
+        # Test if proxy is listening on port 3128
+        Start-Sleep -Seconds 2
         try {
-            # Run 3proxy --install to install as Windows service
-            $installOutput = & $binaryPath --install 2>&1 | Out-String
-
-            Write-ColorOutput "Service installation output: $installOutput" "Info"
-
-            # Wait for service to be registered
-            Start-Sleep -Seconds 2
-
-            # Check if service exists
-            $service = Get-Service -Name "3proxy" -ErrorAction SilentlyContinue
-            if (-not $service) {
-                throw "Service was not created by 3proxy --install"
-            }
-
-            Write-ColorOutput "3proxy service installed successfully" "Success"
-
-        } finally {
-            Pop-Location
-        }
-
-        Write-ColorOutput "Starting 3proxy service..." "Info"
-
-        # Start service with error handling
-        try {
-            Start-Service -Name "3proxy" -ErrorAction Stop
-
-            # Wait for service to start
-            Start-Sleep -Seconds 3
-
-            # Verify service is running
-            $service = Get-Service -Name "3proxy"
-            if ($service.Status -ne "Running") {
-                throw "Service status: $($service.Status)"
-            }
-
-            Write-ColorOutput "3proxy service started successfully" "Success"
-        } catch {
-            Write-ColorOutput "Service start failed: $_" "Warn"
-            Write-ColorOutput "Attempting to run 3proxy as background process instead..." "Info"
-
-            # Remove the failed service
-            sc.exe delete "3proxy" | Out-Null
-
-            # Start 3proxy as a background process using Start-Process
-            Write-ColorOutput "Starting 3proxy as background process..." "Info"
-
-            # Use Start-Process with -PassThru to get the process object
-            $process = Start-Process -FilePath $binaryPath `
-                                     -ArgumentList "`"$configPath`"" `
-                                     -WindowStyle Hidden `
-                                     -PassThru `
-                                     -ErrorAction Stop
-
-            if ($process) {
-                Start-Sleep -Seconds 3
-
-                # Check if process is still running
-                $process.Refresh()
-                if (-not $process.HasExited) {
-                    Write-ColorOutput "3proxy started as background process (PID: $($process.Id))" "Success"
-                    Write-ColorOutput "Note: 3proxy will stop when you log out. To make it persistent, fix the service issue." "Warn"
-
-                    # Test if 3proxy is listening on port 3128
-                    Start-Sleep -Seconds 2
-                    try {
-                        $testConnection = Test-NetConnection -ComputerName localhost -Port 3128 -WarningAction SilentlyContinue
-                        if ($testConnection.TcpTestSucceeded) {
-                            Write-ColorOutput "3proxy is listening on port 3128" "Success"
-                        } else {
-                            Write-ColorOutput "Warning: 3proxy process is running but not listening on port 3128" "Warn"
-                        }
-                    } catch {
-                        Write-ColorOutput "Could not test port 3128: $_" "Warn"
-                    }
-                } else {
-                    throw "3proxy process exited immediately. Exit code: $($process.ExitCode)"
-                }
+            $testConnection = Test-NetConnection -ComputerName localhost -Port 3128 -WarningAction SilentlyContinue
+            if ($testConnection.TcpTestSucceeded) {
+                Write-ColorOutput "Proxy client is listening on port 3128" "Success"
             } else {
-                throw "Failed to start 3proxy process"
+                Write-ColorOutput "Warning: Proxy service is running but not listening on port 3128" "Warn"
             }
+        } catch {
+            Write-ColorOutput "Could not test port 3128: $_" "Warn"
         }
+
     } catch {
-        Write-ColorOutput "Failed to start 3proxy: $_" "Error"
+        Write-ColorOutput "Failed to start proxy client: $_" "Error"
         Invoke-Rollback
     }
 }
 
 # Configure VS Code
 function Set-VSCodeProxy {
-    Write-ColorOutput "Configuring VS Code..." "Info"
-    
-    $settingsPath = "$env:APPDATA\Code\User\settings.json"
-    
-    if (-not (Test-Path $settingsPath)) {
-        Write-ColorOutput "VS Code settings file not found at: $settingsPath" "Warn"
-        Write-ColorOutput "Please manually configure VS Code with:" "Warn"
-        Write-Host '  "http.proxy": "http://localhost:3128"' -ForegroundColor Yellow
-        Write-Host '  "http.proxyStrictSSL": false' -ForegroundColor Yellow
-        return
-    }
-    
+    Write-ColorOutput "Configuring VS Code proxy settings..." "Info"
+
     try {
-        # Backup original settings
-        Copy-Item $settingsPath "${settingsPath}.backup" -Force
+        $settingsPath = "$env:APPDATA\Code\User\settings.json"
         
-        # Read current settings
-        $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
-        
+        # Create backup
+        if (Test-Path $settingsPath) {
+            Copy-Item $settingsPath "${settingsPath}.backup" -Force
+        }
+
+        # Read existing settings or create new
+        if (Test-Path $settingsPath) {
+            $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+        } else {
+            $settings = @{}
+        }
+
         # Update proxy settings
         $settings | Add-Member -NotePropertyName "http.proxy" -NotePropertyValue "http://localhost:3128" -Force
         $settings | Add-Member -NotePropertyName "http.proxyStrictSSL" -NotePropertyValue $false -Force
-        
-        # Save updated settings
-        $settings | ConvertTo-Json -Depth 100 | Set-Content $settingsPath -Force
-        
-        Write-ColorOutput "VS Code configured (backup saved to ${settingsPath}.backup)" "Success"
+
+        # Save settings
+        $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Force
+
+        Write-ColorOutput "VS Code settings updated" "Success"
     } catch {
-        Write-ColorOutput "Failed to configure VS Code: $_" "Warn"
-        Write-ColorOutput "Please manually add to VS Code settings:" "Warn"
-        Write-Host '  "http.proxy": "http://localhost:3128"' -ForegroundColor Yellow
-        Write-Host '  "http.proxyStrictSSL": false' -ForegroundColor Yellow
+        Write-ColorOutput "Failed to update VS Code settings: $_" "Warn"
     }
 }
 
 # Test proxy connectivity
 function Test-ProxyConnectivity {
     Write-ColorOutput "Testing proxy connectivity..." "Info"
-    
+
     try {
-        $proxyUri = "http://localhost:3128"
-        $testUrl = "http://example.com"
+        $testUrl = "http://d18.api.augmentcode.com/health"
+        $proxy = "http://localhost:3128"
         
-        $response = Invoke-WebRequest -Uri $testUrl -Proxy $proxyUri -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+        $response = Invoke-WebRequest -Uri $testUrl -Proxy $proxy -ProxyUseDefaultCredentials -TimeoutSec 10 -ErrorAction Stop
         
-        if ($response.StatusCode -eq 200 -or $response.StatusCode -eq 403) {
-            Write-ColorOutput "Proxy is responding correctly" "Success"
-            return $true
-        }
+        Write-ColorOutput "Proxy connectivity test successful!" "Success"
     } catch {
-        Write-ColorOutput "Proxy connectivity test failed: $_" "Warn"
-        Write-ColorOutput "This may be normal if the proxy only allows specific domains" "Info"
-        return $false
+        Write-ColorOutput "Proxy connectivity test failed: $($_.Exception.Message)" "Warn"
+        Write-ColorOutput "This may be normal if the upstream proxy requires additional configuration" "Info"
     }
 }
 
 # Main installation flow
-function Main {
+try {
     Write-Host ""
     Write-Host "=========================================" -ForegroundColor Cyan
     Write-Host "Augment Proxy - One-Line Installer" -ForegroundColor Cyan
     Write-Host "Version: $InstallerVersion" -ForegroundColor Cyan
     Write-Host "=========================================" -ForegroundColor Cyan
     Write-Host ""
-    
-    try {
-        Install-3Proxy
-        Install-Certificate
-        New-3ProxyConfig
-        Start-3ProxyService
-        Set-VSCodeProxy
-        Test-ProxyConnectivity
-        Invoke-Cleanup
 
-        Write-Host ""
-        Write-Host "=========================================" -ForegroundColor Green
-        Write-Host " Installation Complete!" -ForegroundColor Green
-        Write-Host "=========================================" -ForegroundColor Green
-        Write-Host ""
-        Write-Host "Next steps:" -ForegroundColor Cyan
-        Write-Host "1. Restart VS Code" -ForegroundColor White
-        Write-Host "2. The Augment extension will now work through the proxy" -ForegroundColor White
-        Write-Host ""
-        Write-Host "Configuration:" -ForegroundColor Cyan
-        Write-Host "  3proxy running on: localhost:3128" -ForegroundColor White
-        Write-Host "  Proxy server: ${ProxyHost}:${ProxyPort}" -ForegroundColor White
-        Write-Host "  Username: $ProxyUsername" -ForegroundColor White
-        Write-Host ""
-        Write-Host "Troubleshooting:" -ForegroundColor Cyan
-        Write-Host "  Check service status: Get-Service 3proxy" -ForegroundColor White
-        Write-Host "  Restart service: Restart-Service 3proxy" -ForegroundColor White
-        Write-Host "  Config file: $InstallPath\3proxy.cfg" -ForegroundColor White
-        Write-Host ""
-    } catch {
-        Write-ColorOutput "Installation failed: $_" "Error"
-        Invoke-Rollback
-    }
+    Install-ProxyClient
+    Install-Certificate
+    Start-ProxyService
+    Set-VSCodeProxy
+    Test-ProxyConnectivity
+    Invoke-Cleanup
+
+    Write-Host ""
+    Write-Host "Installation completed successfully!" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Next steps:" -ForegroundColor Cyan
+    Write-Host "1. Restart VS Code" -ForegroundColor White
+    Write-Host "2. The Augment extension will now work through the proxy" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Configuration:" -ForegroundColor Cyan
+    Write-Host "  Proxy client running on: localhost:3128" -ForegroundColor White
+    Write-Host "  Proxy server: ${ProxyHost}:${ProxyPort}" -ForegroundColor White
+    Write-Host "  Username: $ProxyUsername" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Troubleshooting:" -ForegroundColor Cyan
+    Write-Host "  Check service status: Get-Service AugmentProxy" -ForegroundColor White
+    Write-Host "  Restart service: Restart-Service AugmentProxy" -ForegroundColor White
+    Write-Host "  Installation path: $InstallPath" -ForegroundColor White
+    Write-Host ""
+
+} catch {
+    Write-ColorOutput "Installation failed: $_" "Error"
+    Invoke-Rollback
 }
-
-# Run main installation
-Main
 
