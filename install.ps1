@@ -185,15 +185,15 @@ function New-3ProxyConfig {
 # Logging
 log
 
-# Authentication
-auth strong
-users ${ProxyUsername}:CL:${ProxyPassword}
-
 # Local proxy on port 3128
-proxy -p3128 -a
+proxy -p3128
 
 # Parent proxy with Basic authentication
 parent 1000 http ${ProxyHost} ${ProxyPort} ${ProxyUsername} ${ProxyPassword}
+
+# Access control - allow all from localhost
+allow 127.0.0.1
+deny *
 "@
         Set-Content -Path $configPath -Value $config -Force
         Write-ColorOutput "3proxy configuration created" "Success"
