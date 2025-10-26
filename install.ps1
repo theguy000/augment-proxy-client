@@ -8,13 +8,16 @@ param(
     [string]$ProxyUsername,
 
     [Parameter(Mandatory=$true, Position=1)]
-    [SecureString]$ProxyPassword,
+    [string]$ProxyPassword,
 
     [string]$ProxyHost = "proxy.ai-proxy.space",
     [string]$ProxyPort = "6969",
     [string]$GitHubRepo = "theguy000/augment-proxy-client",
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
+
+# Convert plain text password to SecureString for internal use
+$SecureProxyPassword = ConvertTo-SecureString -String $ProxyPassword -AsPlainText -Force
 
 # Script Constants
 $InstallerVersion = "3.0.0"  # Installer script version (Python proxy client)
@@ -428,7 +431,7 @@ function Start-ProxyService {
         # Install service using NSSM
         Write-ColorOutput "Installing $ServiceName service with NSSM..." "Info"
         # Convert SecureString to plain text for NSSM
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ProxyPassword)
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureProxyPassword)
         $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
         [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
 
