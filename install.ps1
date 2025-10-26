@@ -8,16 +8,13 @@ param(
     [string]$ProxyUsername,
 
     [Parameter(Mandatory=$true, Position=1)]
-    [string]$ProxyPassword,
+    [SecureString]$ProxyPassword,
 
     [string]$ProxyHost = "proxy.ai-proxy.space",
     [string]$ProxyPort = "6969",
     [string]$GitHubRepo = "theguy000/augment-proxy-client",
     [switch]$NoRollback  # Debug flag to prevent rollback
 )
-
-# Convert plain text password to SecureString for internal use
-$SecureProxyPassword = ConvertTo-SecureString -String $ProxyPassword -AsPlainText -Force
 
 # Script Constants
 $InstallerVersion = "3.0.0"  # Installer script version (Python proxy client)
@@ -163,37 +160,11 @@ function Remove-ProxyService {
             Write-ColorOutput "Service removed successfully" "Success"
         }
 
-        # Stop any running proxy_client processes with better error handling
-        $proxyProcesses = Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue
-        if ($proxyProcesses) {
-            Write-ColorOutput "Stopping proxy_client processes..." "Info"
-            foreach ($proc in $proxyProcesses) {
-                try {
-                    $proc | Stop-Process -Force -ErrorAction Stop
-                    Write-ColorOutput "Stopped process ID: $($proc.Id)" "Success"
-                } catch {
-                    Write-ColorOutput "Failed to stop process ID $($proc.Id): $($_.Exception.Message)" "Warn"
-                    # Try using taskkill as fallback
-                    try {
-                        taskkill /F /PID $proc.Id 2>$null | Out-Null
-                        Write-ColorOutput "Forcefully killed process ID: $($proc.Id) using taskkill" "Success"
-                    } catch {
-                        Write-ColorOutput "Could not kill process ID $($proc.Id) - it may require manual intervention" "Error"
-                    }
-                }
-            }
-
-            # Wait and verify processes are stopped
-            Start-Sleep -Seconds 2
-            $remainingProcesses = Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue
-            if ($remainingProcesses) {
-                throw "Failed to stop all proxy_client processes. Please manually stop them and try again."
-            }
-        }
+        # Also stop any running proxy_client processes
+        Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
     } catch {
         Write-ColorOutput "Error removing service: $($_.Exception.Message)" "Warn"
-        throw
     }
 }
 
@@ -457,7 +428,7 @@ function Start-ProxyService {
         # Install service using NSSM
         Write-ColorOutput "Installing $ServiceName service with NSSM..." "Info"
         # Convert SecureString to plain text for NSSM
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureProxyPassword)
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ProxyPassword)
         $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
         [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
 
