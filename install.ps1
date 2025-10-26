@@ -149,22 +149,24 @@ function Remove-ProxyService {
 
         if ($existingService) {
             Write-ColorOutput "Found existing $ServiceName service (Status: $($existingService.Status))" "Info"
-            Write-ColorOutput "Stopping and removing service..." "Info"
 
-            # Stop the service first
+            # Stop the service first if it's running
             if ($existingService.Status -eq "Running") {
+                Write-ColorOutput "Stopping service..." "Info"
                 try {
                     Stop-Service -Name $ServiceName -Force -ErrorAction Stop
                     Write-ColorOutput "Service stopped" "Success"
+                    Start-Sleep -Seconds 2
                 } catch {
                     Write-ColorOutput "Failed to stop service gracefully: $($_.Exception.Message)" "Warn"
                 }
-                Start-Sleep -Seconds 2
+            } else {
+                Write-ColorOutput "Service is already stopped" "Info"
             }
 
             # Remove the service using NSSM or sc.exe
+            Write-ColorOutput "Removing service..." "Info"
             if (Test-Path $nssmPath) {
-                & $nssmPath stop $ServiceName confirm 2>$null | Out-Null
                 & $nssmPath remove $ServiceName confirm 2>$null | Out-Null
             } else {
                 sc.exe delete $ServiceName 2>$null | Out-Null
