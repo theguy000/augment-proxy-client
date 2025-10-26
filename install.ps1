@@ -23,11 +23,11 @@ $SecureProxyPassword = ConvertTo-SecureString -String $ProxyPassword -AsPlainTex
 $InstallerVersion = "3.0.0"  # Installer script version (Python proxy client)
 $ErrorActionPreference = "Stop"
 $GitHubRaw = "https://raw.githubusercontent.com/$GitHubRepo/main"
-$InstallPath = "C:\Program Files\AugmentProxy"
+$InstallPath = "C:\Program Files\AIProxy"
 
 # Configuration Constants
 $ServiceName = "ai-proxy"
-$ServiceDisplayName = "AI Proxy Service"
+$ServiceDisplayName = "ai-proxy"
 $ServiceDescription = "Local proxy client for Augment AI"
 $ProxyPort_Local = 3128
 $NssmVersion = "2.24"
