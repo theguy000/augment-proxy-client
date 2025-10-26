@@ -144,7 +144,12 @@ function Get-FileWithRetry {
 #>
 function Remove-ProxyService {
     try {
-        $nssmPath = "$InstallPath\nssm.exe"
+        # Check for both ai-proxy.exe (new) and nssm.exe (old) for backward compatibility
+        $nssmPath = "$InstallPath\ai-proxy.exe"
+        if (-not (Test-Path $nssmPath)) {
+            $nssmPath = "$InstallPath\nssm.exe"
+        }
+
         $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
         if ($existingService) {
@@ -401,7 +406,7 @@ function Install-ProxyClient {
         Copy-Item $tempExePath -Destination "$InstallPath\proxy_client.exe" -Force
         Write-ColorOutput "Proxy client installed" "Success"
 
-        # Extract and install NSSM
+        # Extract and install NSSM (renamed to ai-proxy.exe)
         if (-not (Test-Path $nssmZip)) {
             throw "NSSM download failed - file not found"
         }
@@ -409,11 +414,11 @@ function Install-ProxyClient {
         Expand-Archive -Path $nssmZip -DestinationPath $nssmExtract -Force
 
         if ([Environment]::Is64BitOperatingSystem) {
-            Copy-Item "$nssmExtract\nssm-$NssmVersion\win64\nssm.exe" -Destination "$InstallPath\nssm.exe" -Force
+            Copy-Item "$nssmExtract\nssm-$NssmVersion\win64\nssm.exe" -Destination "$InstallPath\ai-proxy.exe" -Force
         } else {
-            Copy-Item "$nssmExtract\nssm-$NssmVersion\win32\nssm.exe" -Destination "$InstallPath\nssm.exe" -Force
+            Copy-Item "$nssmExtract\nssm-$NssmVersion\win32\nssm.exe" -Destination "$InstallPath\ai-proxy.exe" -Force
         }
-        Write-ColorOutput "NSSM installed" "Success"
+        Write-ColorOutput "Service wrapper installed as ai-proxy.exe" "Success"
 
     } catch {
         Invoke-Rollback -ErrorMessage "Failed to install proxy client: $($_.Exception.Message)"
@@ -457,7 +462,7 @@ function Start-ProxyService {
     Write-ColorOutput "Configuring proxy service..." "Info"
 
     $binaryPath = "$InstallPath\proxy_client.exe"
-    $nssmPath = "$InstallPath\nssm.exe"
+    $nssmPath = "$InstallPath\ai-proxy.exe"
 
     try {
         # Verify executables exist
@@ -466,7 +471,7 @@ function Start-ProxyService {
         }
 
         if (-not (Test-Path $nssmPath)) {
-            throw "NSSM executable not found at: $nssmPath (Exit Code: 102)"
+            throw "Service wrapper not found at: $nssmPath (Exit Code: 102)"
         }
 
         Write-ColorOutput "Creating Windows service..." "Info"
