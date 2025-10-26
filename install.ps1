@@ -163,11 +163,37 @@ function Remove-ProxyService {
             Write-ColorOutput "Service removed successfully" "Success"
         }
 
-        # Also stop any running proxy_client processes
-        Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # Stop any running proxy_client processes with better error handling
+        $proxyProcesses = Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue
+        if ($proxyProcesses) {
+            Write-ColorOutput "Stopping proxy_client processes..." "Info"
+            foreach ($proc in $proxyProcesses) {
+                try {
+                    $proc | Stop-Process -Force -ErrorAction Stop
+                    Write-ColorOutput "Stopped process ID: $($proc.Id)" "Success"
+                } catch {
+                    Write-ColorOutput "Failed to stop process ID $($proc.Id): $($_.Exception.Message)" "Warn"
+                    # Try using taskkill as fallback
+                    try {
+                        taskkill /F /PID $proc.Id 2>$null | Out-Null
+                        Write-ColorOutput "Forcefully killed process ID: $($proc.Id) using taskkill" "Success"
+                    } catch {
+                        Write-ColorOutput "Could not kill process ID $($proc.Id) - it may require manual intervention" "Error"
+                    }
+                }
+            }
+
+            # Wait and verify processes are stopped
+            Start-Sleep -Seconds 2
+            $remainingProcesses = Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue
+            if ($remainingProcesses) {
+                throw "Failed to stop all proxy_client processes. Please manually stop them and try again."
+            }
+        }
 
     } catch {
         Write-ColorOutput "Error removing service: $($_.Exception.Message)" "Warn"
+        throw
     }
 }
 
