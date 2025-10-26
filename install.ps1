@@ -137,6 +137,7 @@ function Get-FileWithRetry {
     Stops and removes the proxy service if it exists.
 .DESCRIPTION
     Centralized function to handle service cleanup.
+    Stops the service first, then removes it, then kills any remaining processes.
 #>
 function Remove-ProxyService {
     try {
@@ -144,27 +145,67 @@ function Remove-ProxyService {
         $existingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
         if ($existingService) {
-            Write-ColorOutput "Removing existing $ServiceName service..." "Info"
+            Write-ColorOutput "Found existing $ServiceName service (Status: $($existingService.Status))" "Info"
+            Write-ColorOutput "Stopping and removing service..." "Info"
 
+            # Stop the service first
+            if ($existingService.Status -eq "Running") {
+                try {
+                    Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+                    Write-ColorOutput "Service stopped" "Success"
+                } catch {
+                    Write-ColorOutput "Failed to stop service gracefully: $($_.Exception.Message)" "Warn"
+                }
+                Start-Sleep -Seconds 2
+            }
+
+            # Remove the service using NSSM or sc.exe
             if (Test-Path $nssmPath) {
-                Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 1
                 & $nssmPath stop $ServiceName confirm 2>$null | Out-Null
                 & $nssmPath remove $ServiceName confirm 2>$null | Out-Null
             } else {
-                Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
                 sc.exe delete $ServiceName 2>$null | Out-Null
             }
 
             Start-Sleep -Seconds 1
             Write-ColorOutput "Service removed successfully" "Success"
+        } else {
+            Write-ColorOutput "No existing $ServiceName service found" "Info"
         }
 
-        # Also stop any running proxy_client processes
-        Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        # Kill any remaining proxy_client processes
+        $proxyProcesses = Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue
+        if ($proxyProcesses) {
+            Write-ColorOutput "Found $($proxyProcesses.Count) proxy_client process(es), stopping them..." "Info"
+
+            foreach ($proc in $proxyProcesses) {
+                try {
+                    Write-ColorOutput "Stopping process ID: $($proc.Id)" "Info"
+                    taskkill /F /PID $proc.Id 2>$null | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-ColorOutput "Process $($proc.Id) stopped" "Success"
+                    }
+                } catch {
+                    Write-ColorOutput "Failed to stop process $($proc.Id): $($_.Exception.Message)" "Warn"
+                }
+            }
+
+            # Wait and verify all processes are stopped
+            Start-Sleep -Seconds 2
+            $remainingProcesses = Get-Process -Name "proxy_client" -ErrorAction SilentlyContinue
+            if ($remainingProcesses) {
+                Write-ColorOutput "Warning: $($remainingProcesses.Count) proxy_client process(es) still running" "Warn"
+                throw "Failed to stop all proxy_client processes. Please manually stop them and try again."
+            } else {
+                Write-ColorOutput "All proxy_client processes stopped successfully" "Success"
+            }
+        } else {
+            Write-ColorOutput "No proxy_client processes found" "Info"
+        }
 
     } catch {
-        Write-ColorOutput "Error removing service: $($_.Exception.Message)" "Warn"
+        Write-ColorOutput "Error during cleanup: $($_.Exception.Message)" "Error"
+        throw
     }
 }
 
