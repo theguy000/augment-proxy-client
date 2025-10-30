@@ -80,6 +80,113 @@ function Test-Administrator {
 
 <#
 .SYNOPSIS
+    Checks and ensures required Windows services are running.
+.DESCRIPTION
+    Verifies that essential Windows services required for network connectivity
+    and proxy functionality are running. Attempts to start them if stopped.
+    This helps prevent issues where proxy services fail to start due to missing dependencies.
+.OUTPUTS
+    Boolean indicating if all critical services are running.
+#>
+function Test-WindowsServiceDependencies {
+    Write-ColorOutput "Checking Windows service dependencies..." "Info"
+
+    # List of critical services that might affect proxy functionality
+    $criticalServices = @(
+        @{ Name = "Dnscache"; DisplayName = "DNS Client"; Required = $true },
+        @{ Name = "NlaSvc"; DisplayName = "Network Location Awareness"; Required = $true },
+        @{ Name = "Netman"; DisplayName = "Network Connections"; Required = $true }
+    )
+
+    $allServicesOk = $true
+
+    foreach ($svc in $criticalServices) {
+        try {
+            $service = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+            
+            if (-not $service) {
+                Write-ColorOutput "Service '$($svc.DisplayName)' ($($svc.Name)) not found" "Warn"
+                if ($svc.Required) {
+                    $allServicesOk = $false
+                }
+                continue
+            }
+
+            if ($service.Status -eq "Running") {
+                Write-ColorOutput "Service '$($svc.DisplayName)' is running" "Info"
+            } else {
+                Write-ColorOutput "Service '$($svc.DisplayName)' is $($service.Status)" "Warn"
+                
+                if ($svc.Required -and $service.Status -eq "Stopped") {
+                    try {
+                        Write-ColorOutput "Attempting to start '$($svc.DisplayName)'..." "Info"
+                        Start-Service -Name $svc.Name -ErrorAction Stop
+                        Start-Sleep -Seconds 2
+                        
+                        $service = Get-Service -Name $svc.Name
+                        if ($service.Status -eq "Running") {
+                            Write-ColorOutput "Service '$($svc.DisplayName)' started successfully" "Success"
+                        } else {
+                            Write-ColorOutput "Failed to start '$($svc.DisplayName)' - Status: $($service.Status)" "Warn"
+                            $allServicesOk = $false
+                        }
+                    } catch {
+                        Write-ColorOutput "Could not start '$($svc.DisplayName)': $($_.Exception.Message)" "Warn"
+                        Write-ColorOutput "You may need to start this service manually" "Warn"
+                        if ($svc.Required) {
+                            $allServicesOk = $false
+                        }
+                    }
+                }
+            }
+        } catch {
+            Write-ColorOutput "Error checking service '$($svc.DisplayName)': $($_.Exception.Message)" "Warn"
+        }
+    }
+
+    # Check for HTTP service (WinHTTP) - optional but important for some proxy scenarios
+    # This addresses the issue where Windows HTTP service fails to start due to missing dependencies
+    try {
+        $httpService = Get-Service -Name "http" -ErrorAction SilentlyContinue
+        if ($httpService) {
+            if ($httpService.Status -ne "Running") {
+                Write-ColorOutput "Windows HTTP service is $($httpService.Status) - this may affect proxy functionality" "Warn"
+                
+                # Check dependencies - WinQuic is a common dependency
+                $httpConfig = sc.exe qc http 2>&1
+                if ($httpConfig -match "WinQuic") {
+                    Write-ColorOutput "HTTP service depends on WinQuic service" "Info"
+                    $winQuicService = Get-Service -Name "WinQuic" -ErrorAction SilentlyContinue
+                    if (-not $winQuicService) {
+                        Write-ColorOutput "WARNING: WinQuic service not found - HTTP service may not start" "Warn"
+                        Write-ColorOutput "This is usually not critical for standalone proxy clients" "Info"
+                    } elseif ($winQuicService.Status -ne "Running") {
+                        Write-ColorOutput "WinQuic service is $($winQuicService.Status)" "Warn"
+                        Write-ColorOutput "Note: Our proxy client does not require WinHTTP service" "Info"
+                    }
+                }
+            } else {
+                Write-ColorOutput "Windows HTTP service is running" "Info"
+            }
+        } else {
+            Write-ColorOutput "Windows HTTP service not found (this is normal on some Windows versions)" "Info"
+        }
+    } catch {
+        # HTTP service might not exist on all Windows versions - this is OK
+    }
+
+    if (-not $allServicesOk) {
+        Write-ColorOutput "Some required services are not running - proxy functionality may be affected" "Warn"
+        Write-ColorOutput "You may need to start these services manually or restart your computer" "Warn"
+    } else {
+        Write-ColorOutput "All critical service dependencies are satisfied" "Success"
+    }
+
+    return $allServicesOk
+}
+
+<#
+.SYNOPSIS
     Downloads a file with retry logic and progress indication.
 .PARAMETER Url
     The URL to download from.
@@ -247,10 +354,11 @@ function Add-DefenderExclusion {
 #>
 function Invoke-Cleanup {
     Write-ColorOutput "Cleaning up temporary files..." "Info"
-    Remove-Item "$env:TEMP\proxy_client.exe" -Force -ErrorAction SilentlyContinue -Confirm:$false
-    Remove-Item "$env:TEMP\mitmproxy-ca-cert.pem" -Force -ErrorAction SilentlyContinue -Confirm:$false
-    Remove-Item "$env:TEMP\nssm.zip" -Force -ErrorAction SilentlyContinue -Confirm:$false
-    Remove-Item "$env:TEMP\nssm" -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false
+    # Certificate is cleaned up separately, NSSM temp files are cleaned up in Install-ProxyClient
+    # Only clean up any stray files in installation directory
+    Remove-Item "$InstallPath\*.tmp" -Force -ErrorAction SilentlyContinue -Confirm:$false
+    Remove-Item "$InstallPath\*.zip" -Force -ErrorAction SilentlyContinue -Confirm:$false
+    Remove-Item "$InstallPath\nssm-temp" -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false
 }
 
 <#
@@ -320,10 +428,6 @@ function Install-ProxyClient {
         Remove-ProxyService
         Start-Sleep -Milliseconds 500
 
-        # Add Windows Defender exclusions BEFORE downloading
-        Add-DefenderExclusion -Path $InstallPath
-        Add-DefenderExclusion -Path $env:TEMP
-
         # Remove old installation if exists
         Remove-Item $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -331,12 +435,15 @@ function Install-ProxyClient {
         New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
         New-Item -ItemType Directory -Force -Path "$InstallPath\logs" | Out-Null
 
-        # Prepare download paths
+        # Add Windows Defender exclusion AFTER creating directory (only exclude installation path)
+        Add-DefenderExclusion -Path $InstallPath
+
+        # Prepare download paths - download directly to installation directory to avoid TEMP exclusion
         $proxyUrl = "$GitHubRaw/binaries/windows/proxy_client.exe"
-        $tempExePath = "$env:TEMP\proxy_client.exe"
+        $tempExePath = "$InstallPath\proxy_client.exe.tmp"
         $nssmUrl = "https://nssm.cc/release/nssm-$NssmVersion.zip"
-        $nssmZip = "$env:TEMP\nssm.zip"
-        $nssmExtract = "$env:TEMP\nssm"
+        $nssmZip = "$InstallPath\nssm.zip"
+        $nssmExtract = "$InstallPath\nssm-temp"
 
         Write-ColorOutput "Downloading proxy client and NSSM in parallel..." "Info"
 
@@ -403,7 +510,8 @@ function Install-ProxyClient {
         if (-not (Test-Path $tempExePath)) {
             throw "Proxy client download failed - file not found"
         }
-        Copy-Item $tempExePath -Destination "$InstallPath\proxy_client.exe" -Force
+        # Rename temp file to final name (atomic operation)
+        Move-Item $tempExePath -Destination "$InstallPath\proxy_client.exe" -Force
         Write-ColorOutput "Proxy client installed" "Success"
 
         # Extract and install NSSM (renamed to ai-proxy.exe)
@@ -418,6 +526,10 @@ function Install-ProxyClient {
         } else {
             Copy-Item "$nssmExtract\nssm-$NssmVersion\win32\nssm.exe" -Destination "$InstallPath\ai-proxy.exe" -Force
         }
+        
+        # Clean up NSSM temporary files
+        Remove-Item $nssmZip -Force -ErrorAction SilentlyContinue
+        Remove-Item $nssmExtract -Recurse -Force -ErrorAction SilentlyContinue
         Write-ColorOutput "Service wrapper installed as ai-proxy.exe" "Success"
 
     } catch {
@@ -437,7 +549,8 @@ function Install-Certificate {
 
     try {
         $certUrl = "$GitHubRaw/certs/mitmproxy-ca-cert.pem"
-        $certPath = "$env:TEMP\mitmproxy-ca-cert.pem"
+        # Download certificate to installation directory (already excluded from Defender)
+        $certPath = "$InstallPath\mitmproxy-ca-cert.pem"
 
         # Download with retry logic
         Get-FileWithRetry -Url $certUrl -Destination $certPath -Description "Downloading certificate"
@@ -445,6 +558,9 @@ function Install-Certificate {
         Write-ColorOutput "Installing certificate to Trusted Root Certification Authorities..." "Info"
         Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
 
+        # Clean up certificate file after installation
+        Remove-Item $certPath -Force -ErrorAction SilentlyContinue
+        
         Write-ColorOutput "Certificate installed successfully" "Success"
     } catch {
         Invoke-Rollback -ErrorMessage "Failed to install certificate: $($_.Exception.Message)"
@@ -465,6 +581,9 @@ function Start-ProxyService {
     $nssmPath = "$InstallPath\ai-proxy.exe"
 
     try {
+        # Check Windows service dependencies before starting
+        Test-WindowsServiceDependencies | Out-Null
+
         # Verify executables exist
         if (-not (Test-Path $binaryPath)) {
             throw "Proxy client executable not found at: $binaryPath (Exit Code: 101)"
